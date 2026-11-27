@@ -53,6 +53,9 @@ static PyObject *(*p_PyUnicode_FromString)(const char *);
 static const char *(*p_PyUnicode_AsUTF8)(PyObject *);
 static void (*p_Py_IncRef)(PyObject *);
 static void (*p_Py_DecRef)(PyObject *);
+static PyObject *(*p_PyImport_ImportModule)(const char *);
+static PyObject *(*p_PyObject_GetAttrString)(PyObject *, const char *);
+static PyObject *(*p_PyObject_Str)(PyObject *);
 
 enum { PY_FILE_INPUT = 257, PY_EVAL_INPUT = 258 };
 
@@ -74,6 +77,19 @@ static const char *helper_source =
     "            pass\n"
     "def to_json(v):\n"
     "    return _json.dumps(v, ensure_ascii=False, allow_nan=False)\n"
+    "def from_json(s):\n"
+    "    return _json.loads(s)\n"
+    "def call(f, args, kwargs):\n"
+    "    a = _json.loads(args) if args else []\n"
+    "    k = _json.loads(kwargs) if kwargs else {}\n"
+    "    if not isinstance(a, list):\n"
+    "        raise TypeError('位置の引数は JSON の配列で渡してください')\n"
+    "    if not isinstance(k, dict):\n"
+    "        raise TypeError('名前つきの引数は JSON の物で渡してください')\n"
+    "    return f(*a, **k)\n"
+    "def bind(name, v):\n"
+    "    import sys\n"
+    "    setattr(sys.modules['__suru__'], name, v)\n"
     "def run_file(path):\n"
     "    import runpy\n"
     "    old = list(_sys.argv)\n"
@@ -87,6 +103,11 @@ static const char *helper_source =
     "def _is_user(f):\n"
     "    return bool(f) and not f.startswith('<suru-python>') and not f.startswith('<frozen') and not f.startswith(_lib)\n"
     "def format_error(t, v, tb):\n"
+    "    # C の側は、無いものの代わりに型を渡してくる\n"
+    "    if not isinstance(v, BaseException):\n"
+    "        v = None\n"
+    "    if not hasattr(tb, 'tb_frame'):\n"
+    "        tb = None\n"
     "    if t is None:\n"
     "        return '原因の分からない失敗です'\n"
     "    if isinstance(v, SystemExit):\n"
@@ -113,6 +134,9 @@ static PyObject *fn_to_json;   // 手伝いの関数
 static PyObject *fn_run_file;
 static PyObject *fn_format_error;
 static PyObject *fn_flush;
+static PyObject *fn_from_json;
+static PyObject *fn_call;
+static PyObject *fn_bind;
 static char init_error[1024];  // 始めるのに失敗したときの文(空なら成功)
 
 #ifdef _WIN32
@@ -241,6 +265,9 @@ static int load_symbols(void) {
   GET(PyUnicode_AsUTF8);
   GET(Py_IncRef);
   GET(Py_DecRef);
+  GET(PyImport_ImportModule);
+  GET(PyObject_GetAttrString);
+  GET(PyObject_Str);
 #undef GET
   return 1;
 }
@@ -354,6 +381,9 @@ static void start(void) {
     fn_run_file = p_PyDict_GetItemString(hd, "run_file");
     fn_format_error = p_PyDict_GetItemString(hd, "format_error");
     fn_flush = p_PyDict_GetItemString(hd, "flush");
+    fn_from_json = p_PyDict_GetItemString(hd, "from_json");
+    fn_call = p_PyDict_GetItemString(hd, "call");
+    fn_bind = p_PyDict_GetItemString(hd, "bind");
     // 始めるためだけに足した環境変数は、Python から動かす子のプロセスに渡さない
     if (we_set_home) {
       PyObject *r2 = p_PyRun_StringFlags("_os.environ.pop('PYTHONHOME', None)\n", PY_FILE_INPUT, hd, hd, NULL);
@@ -453,4 +483,135 @@ int64_t supy_run_file(const char *path) {
   flush_output();
   p_PyGILState_Release(g);
   return rc;
+}
+
+// ---- 手札(Python の物) ----
+// 物を返す関数は、新しい参照の番地を返します(失敗は 0 で、文は supy_text)。
+// 使い終わったら supy_release で放します。
+
+// 物を返した後の始末: 失敗なら文を置く
+static PyObject *done_obj(PyObject *o) {
+  if (o) set_text("");
+  else take_error();
+  flush_output();
+  return o;
+}
+
+// 文字列の物(新しい参照)を置いて放す
+static int64_t done_text(PyObject *s) {
+  int64_t rc = -1;
+  if (s) {
+    const char *u = p_PyUnicode_AsUTF8(s);
+    if (u) {
+      set_text(u);
+      rc = 0;
+    }
+    p_Py_DecRef(s);
+  }
+  if (rc < 0) take_error();
+  flush_output();
+  return rc;
+}
+
+// モジュールを取り込む(import 名前。「os.path」のような点の入った名前も)
+void *supy_import(const char *name) {
+  if (supy_start() < 0) return NULL;
+  PyGILState_STATE g = p_PyGILState_Ensure();
+  // PyImport_ImportModule は「os.path」なら一番内側のモジュールを返す(import 文と違う)
+  PyObject *o = p_PyImport_ImportModule(name);
+  o = done_obj(o);
+  p_PyGILState_Release(g);
+  return o;
+}
+
+// 式を評価して、物のまま返す
+void *supy_eval_obj(const char *code) {
+  if (supy_start() < 0) return NULL;
+  PyGILState_STATE g = p_PyGILState_Ensure();
+  PyObject *o = done_obj(p_PyRun_StringFlags(code, PY_EVAL_INPUT, main_dict, main_dict, NULL));
+  p_PyGILState_Release(g);
+  return o;
+}
+
+// 属性を取る
+void *supy_getattr(void *obj, const char *name) {
+  if (supy_start() < 0) return NULL;
+  PyGILState_STATE g = p_PyGILState_Ensure();
+  PyObject *o = done_obj(p_PyObject_GetAttrString(obj, name));
+  p_PyGILState_Release(g);
+  return o;
+}
+
+// 呼ぶ。args は JSON の配列、kwargs は JSON の物(空の文字列なら無し)
+void *supy_call(void *f, const char *args, const char *kwargs) {
+  if (supy_start() < 0) return NULL;
+  PyGILState_STATE g = p_PyGILState_Ensure();
+  PyObject *a = p_PyUnicode_FromString(args);
+  PyObject *k = p_PyUnicode_FromString(kwargs);
+  PyObject *o = NULL;
+  if (a && k) o = p_PyObject_CallFunctionObjArgs(fn_call, f, a, k, NULL);
+  if (a) p_Py_DecRef(a);
+  if (k) p_Py_DecRef(k);
+  o = done_obj(o);
+  p_PyGILState_Release(g);
+  return o;
+}
+
+// JSON の文字列から Python の値を作る
+void *supy_from_json(const char *json) {
+  if (supy_start() < 0) return NULL;
+  PyGILState_STATE g = p_PyGILState_Ensure();
+  PyObject *s = p_PyUnicode_FromString(json);
+  PyObject *o = s ? p_PyObject_CallFunctionObjArgs(fn_from_json, s, NULL) : NULL;
+  if (s) p_Py_DecRef(s);
+  o = done_obj(o);
+  p_PyGILState_Release(g);
+  return o;
+}
+
+// 物を JSON の文字列にして置く
+int64_t supy_obj_json(void *obj) {
+  if (supy_start() < 0) return -1;
+  PyGILState_STATE g = p_PyGILState_Ensure();
+  int64_t rc = done_text(p_PyObject_CallFunctionObjArgs(fn_to_json, obj, NULL));
+  p_PyGILState_Release(g);
+  return rc;
+}
+
+// 物を str() の文字列にして置く
+int64_t supy_obj_str(void *obj) {
+  if (supy_start() < 0) return -1;
+  PyGILState_STATE g = p_PyGILState_Ensure();
+  int64_t rc = done_text(p_PyObject_Str(obj));
+  p_PyGILState_Release(g);
+  return rc;
+}
+
+// 物に名前を付けて、Python実行する・Python評価する のコードから使えるようにする
+int64_t supy_bind(const char *name, void *obj) {
+  if (supy_start() < 0) return -1;
+  PyGILState_STATE g = p_PyGILState_Ensure();
+  int64_t rc = -1;
+  PyObject *n = p_PyUnicode_FromString(name);
+  if (n) {
+    PyObject *r = p_PyObject_CallFunctionObjArgs(fn_bind, n, obj, NULL);
+    p_Py_DecRef(n);
+    if (r) {
+      p_Py_DecRef(r);
+      rc = 0;
+    }
+  }
+  if (rc < 0) take_error();
+  else set_text("");
+  p_PyGILState_Release(g);
+  return rc;
+}
+
+// 物を放す(参照を1つ減らす)
+int64_t supy_release(void *obj) {
+  if (!obj || supy_start() < 0) return 0;
+  PyGILState_STATE g = p_PyGILState_Ensure();
+  p_Py_DecRef(obj);
+  p_PyGILState_Release(g);
+  return 0;
 }

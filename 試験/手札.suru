@@ -1,0 +1,65 @@
+「試験」 を 読み込んで 使う
+「標準」 を 読み込んで 使う
+「JSON」 を 読み込んで 使う
+「Python」 を 読み込んで 使う
+
+取込試験する は 真偽 の 動作
+取込試験する とは 以下の手順です
+  数学 とは 「math」 を Python取込した 結果
+  根 とは 数学 から 「sqrt」 を Python属性取得した 結果
+  r とは 根 を （（16 の JSON数） を 空 に 挿入する） で Python呼出した 結果
+  （r を Python値にした 結果） を （4 の JSON数） に 一致確認する
+  （r を Python文字列にした 結果） を 「4.0」 に 一致確認する
+  # 点の入った名前は、一番内側のモジュール
+  道 とは 「os.path」 を Python取込した 結果
+  b とは （道 から 「basename」 を Python属性取得した 結果） を （（「/a/b/象.txt」 の JSON文字列） を 空 に 挿入する） で Python呼出した 結果
+  （b を Python値にした 結果） を （「象.txt」 の JSON文字列） に 一致確認する
+  r を Python解放する
+  根 を Python解放する
+  数学 を Python解放する
+  b を Python解放する
+  道 を Python解放する
+  真 を 結果にする
+  以上です
+
+名前つき試験する は 真偽 の 動作
+名前つき試験する とは 以下の手順です
+  j とは 「json」 を Python取込した 結果
+  書く とは j から 「dumps」 を Python属性取得した 結果
+  値 とは （（「b」 と （2 の JSON数） の JSON項目） と （「a」 と （1 の JSON数） の JSON項目）） の JSON物
+  名前つき とは （（「sort_keys」 と （真 の JSON真偽） の JSON項目） を 空 に 挿入する） の JSON物
+  s とは 書く を （値 を 空 に 挿入する） で 名前つき に Python名前つき呼出した 結果
+  （s を Python値にした 結果） を （「{"a": 1, "b": 2}」 の JSON文字列） に 一致確認する
+  以上です
+
+物試験する は 真偽 の 動作
+物試験する とは 以下の手順です
+  # JSON にできない物も手札で持ち、名前を付けてコードから使える
+  「class 箱:」 + 改行 + 「    def __init__(self, n): self.n = n」 + 改行 + 「    def 倍(self): return self.n * 2」 を Python実行する
+  箱 とは 「箱(21)」 を Python物評価した 結果
+  倍 とは 箱 から 「倍」 を Python属性取得した 結果
+  （（倍 を 空 で Python呼出した 結果） を Python値にした 結果） を （42 の JSON数） に 一致確認する
+  「私の箱」 に 箱 を Python代入する
+  （「私の箱.倍()」 を Python評価した 結果） を （42 の JSON数） に 一致確認する
+  a とは （箱 を Python値にする） を 試行した 結果
+  （a を 有無にする） を 無 に 一致確認する
+  # JSON から作った値
+  l とは （（1 の JSON数） と （2 の JSON数）） の JSON配列 を Python物にした 結果
+  「l」 に l を Python代入する
+  （「sum(l)」 を Python評価した 結果） を （3 の JSON数） に 一致確認する
+  箱 を Python解放する
+  l を Python解放する
+  真 を 結果にする
+  以上です
+
+手札失敗試験する は 真偽 の 動作
+手札失敗試験する とは 以下の手順です
+  a とは （「無いモジュール」 を Python取込する） を 試行した 結果
+  a を （「Python でモジュール『無いモジュール』を取り込むのに失敗しました(ModuleNotFoundError: No module named '無いモジュール')」 の 失敗） に 一致確認する
+  m とは 「math」 を Python取込した 結果
+  b とは （m から 「無い」 を Python属性取得する） を 試行した 結果
+  b を （「Python で属性『無い』を取るのに失敗しました(AttributeError: module 'math' has no attribute '無い')」 の 失敗） に 一致確認する
+  f とは m から 「sqrt」 を Python属性取得した 結果
+  c とは （f を （（-1 の JSON数） を 空 に 挿入する） で Python呼出する） を 試行した 結果
+  c を （「Python で呼び出すのに失敗しました(ValueError: math domain error)」 の 失敗） に 一致確認する
+  以上です

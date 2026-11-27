@@ -41,3 +41,4 @@ jobs:
         run: |
           python -m pip install "git+https://github.com/suru-lang/suru@main"
           suru 例/はじめて.suru
+          suru 例/手札.suru
