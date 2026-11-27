@@ -50,6 +50,28 @@ suru 0.9.1 or later is required.
 
 All of them are actions. On failure they raise a run-time error such as 「Python で『1 / 0』を評価するのに失敗しました(1行目: ZeroDivisionError: division by zero)」, which `試行する` can catch. They may be called from any suru thread (each call takes the GIL).
 
+Objects that cannot become JSON (modules, functions, class instances, …) are held as `Python物` handles. Release them with `Python解放する` when done (otherwise they stay until the program ends).
+
+```
+統計 とは 「statistics」 を Python取込した 結果
+平均 とは 統計 から 「mean」 を Python属性取得した 結果
+r とは 平均 を （（（80 の JSON数） と （92 の JSON数）） の JSON配列 を 空 に 挿入する） で Python呼出した 結果
+（r を Python値にした 結果） を 表示する
+```
+
+| Form | Meaning |
+|---|---|
+| `名前 を Python取込する` | The imported module (dotted names such as `「os.path」` too) |
+| `式 を Python物評価する` | Evaluates an expression and returns the value as a `Python物` |
+| `物 から 名前 を Python属性取得する` | `物.名前` |
+| `物 を 引数群 で Python呼出する` | `物(*引数群)`. 引数群 is a list of `JSON`; the result is a `Python物` |
+| `物 を 引数群 で 名前つき に Python名前つき呼出する` | `物(*引数群, **名前つき)`. 名前つき is a `JSON物` |
+| `物 を Python値にする` | Converts the object to `JSON` (fails if it cannot) |
+| `値 を Python物にする` | Makes a Python value from `JSON` |
+| `物 を Python文字列にする` | `str(物)` |
+| `名前 に 物 を Python代入する` | Gives the object a name usable from `Python実行する` / `Python評価する` code |
+| `物 を Python解放する` | Releases the object |
+
 ## License
 
 MIT
