@@ -87,6 +87,10 @@ static const char *helper_source =
     "    if not isinstance(k, dict):\n"
     "        raise TypeError('名前つきの引数は JSON の物で渡してください')\n"
     "    return f(*a, **k)\n"
+    "def to_bytes(v):\n"
+    "    if isinstance(v, (str, int)):\n"
+    "        raise TypeError('バイト列にできるのは bytes・bytearray・memoryview などです(' + type(v).__name__ + ' は できません)')\n"
+    "    return bytes(v)\n"
     "def bind(name, v):\n"
     "    import sys\n"
     "    setattr(sys.modules['__suru__'], name, v)\n"
@@ -137,6 +141,7 @@ static PyObject *fn_flush;
 static PyObject *fn_from_json;
 static PyObject *fn_call;
 static PyObject *fn_bind;
+static PyObject *fn_to_bytes;
 static char init_error[1024];  // 始めるのに失敗したときの文(空なら成功)
 
 #ifdef _WIN32
@@ -384,6 +389,7 @@ static void start(void) {
     fn_from_json = p_PyDict_GetItemString(hd, "from_json");
     fn_call = p_PyDict_GetItemString(hd, "call");
     fn_bind = p_PyDict_GetItemString(hd, "bind");
+    fn_to_bytes = p_PyDict_GetItemString(hd, "to_bytes");
     // 始めるためだけに足した環境変数は、Python から動かす子のプロセスに渡さない
     if (we_set_home) {
       PyObject *r2 = p_PyRun_StringFlags("_os.environ.pop('PYTHONHOME', None)\n", PY_FILE_INPUT, hd, hd, NULL);
@@ -615,3 +621,222 @@ int64_t supy_release(void *obj) {
   p_PyGILState_Release(g);
   return 0;
 }
+
+// ---- 速い受け渡し(JSON の文字を通さない) ----
+
+#ifdef _WIN32
+static __declspec(thread) int64_t last_int;
+static __declspec(thread) double last_float;
+static __declspec(thread) void *last_buf;
+#else
+static __thread int64_t last_int;
+static __thread double last_float;
+static __thread void *last_buf;
+#endif
+
+static PyObject *(*p_PyLong_FromLongLong)(long long);
+static long long (*p_PyLong_AsLongLong)(PyObject *);
+static PyObject *(*p_PyFloat_FromDouble)(double);
+static double (*p_PyFloat_AsDouble)(PyObject *);
+static PyObject *(*p_PyBool_FromLong)(long);
+static int (*p_PyObject_IsTrue)(PyObject *);
+static PyObject *(*p_PyBytes_FromStringAndSize)(const char *, intptr_t);
+static PyObject *(*p_PyTuple_New)(intptr_t);
+static int (*p_PyTuple_SetItem)(PyObject *, intptr_t, PyObject *);
+static PyObject *(*p_PyObject_Call)(PyObject *, PyObject *, PyObject *);
+static PyObject *(*p_PyObject_GetItem)(PyObject *, PyObject *);
+static intptr_t (*p_PyObject_Size)(PyObject *);
+static int (*p_PyBytes_AsStringAndSize)(PyObject *, char **, intptr_t *);
+static int (*p_PyObject_SetItem)(PyObject *, PyObject *, PyObject *);
+static PyObject *(*p_PySequence_List)(PyObject *);
+static PyObject *(*p_PySequence_GetItem)(PyObject *, intptr_t);
+
+static int more_loaded;
+static int load_more(void) {
+  if (more_loaded) return 1;
+#define GET2(n)                                                                    \
+  do {                                                                             \
+    *(void **)(&p_##n) = sym(#n);                                                  \
+    if (!p_##n) {                                                                  \
+      set_text("libpython に " #n " がありません");                                \
+      return 0;                                                                    \
+    }                                                                              \
+  } while (0)
+  GET2(PyLong_FromLongLong);
+  GET2(PyLong_AsLongLong);
+  GET2(PyFloat_FromDouble);
+  GET2(PyFloat_AsDouble);
+  GET2(PyBool_FromLong);
+  GET2(PyObject_IsTrue);
+  GET2(PyBytes_FromStringAndSize);
+  GET2(PyTuple_New);
+  GET2(PyTuple_SetItem);
+  GET2(PyObject_Call);
+  GET2(PyObject_GetItem);
+  GET2(PyObject_Size);
+  GET2(PyBytes_AsStringAndSize);
+  GET2(PyObject_SetItem);
+  GET2(PySequence_List);
+  GET2(PySequence_GetItem);
+#undef GET2
+  more_loaded = 1;
+  return 1;
+}
+
+// 始めて、追加の関数も取る。GIL を取った状態を g に入れて 1、だめなら 0
+static int enter(PyGILState_STATE *g) {
+  if (supy_start() < 0) return 0;
+  *g = p_PyGILState_Ensure();
+  if (!load_more()) {
+    p_PyGILState_Release(*g);
+    return 0;
+  }
+  return 1;
+}
+
+#define WITH_GIL(expr)                     \
+  PyGILState_STATE g;                      \
+  if (!enter(&g)) return NULL;             \
+  PyObject *o = done_obj(expr);            \
+  p_PyGILState_Release(g);                 \
+  return o
+
+void *supy_from_int(int64_t n) { WITH_GIL(p_PyLong_FromLongLong(n)); }
+void *supy_from_float(double x) { WITH_GIL(p_PyFloat_FromDouble(x)); }
+void *supy_from_bool(int b) { WITH_GIL(p_PyBool_FromLong(b)); }
+void *supy_from_str(const char *s) { WITH_GIL(p_PyUnicode_FromString(s)); }
+void *supy_from_bytes(const uint8_t *b, int64_t n) { WITH_GIL(p_PyBytes_FromStringAndSize((const char *)b, (intptr_t)n)); }
+
+// obj[key]
+void *supy_getitem(void *obj, void *key) { WITH_GIL(p_PyObject_GetItem(obj, key)); }
+
+// 長さの決まった物の並びを作る(呼出の引数のため)。要素は supy_tuple_set で入れる
+void *supy_tuple_new(int64_t n) { WITH_GIL(p_PyTuple_New((intptr_t)n)); }
+
+// 並びの i 番目に物を入れる(物の参照は並びが別に持つので、物は放してかまわない)
+int64_t supy_tuple_set(void *t, int64_t i, void *obj) {
+  PyGILState_STATE g;
+  if (!enter(&g)) return -1;
+  p_Py_IncRef(obj);  // SetItem は参照を盗む
+  int64_t rc = p_PyTuple_SetItem(t, (intptr_t)i, obj) == 0 ? 0 : -1;
+  if (rc < 0) take_error();
+  p_PyGILState_Release(g);
+  return rc;
+}
+
+// f(*並び)
+void *supy_call_tuple(void *f, void *t) { WITH_GIL(p_PyObject_Call(f, t, NULL)); }
+
+// f(*並び, **辞書)
+void *supy_call_tuple_kw(void *f, void *t, void *kw) { WITH_GIL(p_PyObject_Call(f, t, kw)); }
+
+// 数にする(int にできるもの。結果は supy_int)
+int64_t supy_to_int(void *obj) {
+  PyGILState_STATE g;
+  if (!enter(&g)) return -1;
+  long long v = p_PyLong_AsLongLong(obj);
+  int64_t rc = 0;
+  if (v == -1 && p_PyErr_Occurred()) {
+    take_error();
+    rc = -1;
+  } else if (v > ((long long)1 << 62) || v < -((long long)1 << 62)) {
+    set_text("OverflowError: する の数の範囲(±2^62)を超えています");
+    rc = -1;
+  } else {
+    last_int = v;
+  }
+  p_PyGILState_Release(g);
+  return rc;
+}
+int64_t supy_int(void) { return last_int; }
+
+// 小数にする(float にできるもの。結果は supy_float)
+int64_t supy_to_float(void *obj) {
+  PyGILState_STATE g;
+  if (!enter(&g)) return -1;
+  double v = p_PyFloat_AsDouble(obj);
+  int64_t rc = 0;
+  if (v == -1.0 && p_PyErr_Occurred()) {
+    take_error();
+    rc = -1;
+  } else {
+    last_float = v;
+  }
+  p_PyGILState_Release(g);
+  return rc;
+}
+double supy_float(void) { return last_float; }
+
+// 真偽にする(bool(物))。1・0、失敗は -1
+int64_t supy_to_bool(void *obj) {
+  PyGILState_STATE g;
+  if (!enter(&g)) return -1;
+  int r = p_PyObject_IsTrue(obj);
+  if (r < 0) take_error();
+  p_PyGILState_Release(g);
+  return r;
+}
+
+// 文字列にする(str の物だけ。結果は supy_text)
+int64_t supy_to_str(void *obj) {
+  PyGILState_STATE g;
+  if (!enter(&g)) return -1;
+  const char *u = p_PyUnicode_AsUTF8(obj);
+  int64_t rc = 0;
+  if (u) set_text(u);
+  else {
+    take_error();
+    rc = -1;
+  }
+  p_PyGILState_Release(g);
+  return rc;
+}
+
+// バイト列にする(bytes・bytearray・memoryview など。長さを返し、中身は supy_buf の番地に)
+int64_t supy_to_bytes(void *obj) {
+  PyGILState_STATE g;
+  if (!enter(&g)) return -1;
+  int64_t rc = -1;
+  PyObject *b = p_PyObject_CallFunctionObjArgs(fn_to_bytes, obj, NULL);  // bytes(物)
+  if (b) {
+    char *data = NULL;
+    intptr_t n = 0;
+    if (p_PyBytes_AsStringAndSize(b, &data, &n) == 0) {
+      free(last_buf);
+      last_buf = malloc(n > 0 ? (size_t)n : 1);
+      if (n > 0) memcpy(last_buf, data, (size_t)n);
+      rc = n;
+    }
+    p_Py_DecRef(b);
+  }
+  if (rc < 0) take_error();
+  p_PyGILState_Release(g);
+  return rc;
+}
+void *supy_buf(void) { return last_buf; }
+
+// len(物)
+int64_t supy_len(void *obj) {
+  PyGILState_STATE g;
+  if (!enter(&g)) return -1;
+  intptr_t n = p_PyObject_Size(obj);
+  if (n < 0) take_error();
+  p_PyGILState_Release(g);
+  return n;
+}
+
+// obj[key] = val
+int64_t supy_setitem(void *obj, void *key, void *val) {
+  PyGILState_STATE g;
+  if (!enter(&g)) return -1;
+  int64_t rc = p_PyObject_SetItem(obj, key, val) == 0 ? 0 : -1;
+  if (rc < 0) take_error();
+  p_PyGILState_Release(g);
+  return rc;
+}
+
+// list(物)
+void *supy_to_list(void *obj) { WITH_GIL(p_PySequence_List(obj)); }
+
+// 並び(list・tuple など)の i 番目(0 から)
+void *supy_index(void *seq, int64_t i) { WITH_GIL(p_PySequence_GetItem(seq, (intptr_t)i)); }

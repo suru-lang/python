@@ -72,6 +72,26 @@ r とは 平均 を （（（80 の JSON数） と （92 の JSON数）） の J
 | `名前 に 物 を Python代入する` | Gives the object a name usable from `Python実行する` / `Python評価する` code |
 | `物 を Python解放する` | Releases the object |
 
+Numbers, strings, byte strings and so on can also be passed directly without going through JSON text (faster for large byte strings and repeated calls).
+
+```
+f とは 「max」 を Python物評価した 結果
+r とは f を （（3 を Python整数物にした 結果） と （2.5 を Python小数物にした 結果）） で Python物呼出した 結果
+（r を Python整数値にした 結果） を 表示する
+```
+
+| Form | Meaning |
+|---|---|
+| `n を Python整数物にする`, `x を Python小数物にする`, `b を Python真偽物にする`, `s を Python文字列物にする`, `bs を Pythonバイト列物にする` | Make a Python object from a suru value |
+| `物 を Python整数値にする` (`数`, up to ±2^62), `Python小数値にする` (`小数`), `Python真偽値にする` (`bool(物)`) | Turn an object into a suru value |
+| `物 を Python文字列値にする` (str objects only), `Pythonバイト列値にする` (bytes, bytearray, …) | Likewise |
+| `物 を Python長さ取得する` | `len(物)` |
+| `物 から 鍵 を Python要素取得する` | `物[鍵]` (鍵 is a `Python物` too) |
+| `物 で 鍵 に 値 を Python要素設定する` | `物[鍵] = 値` |
+| `物 を Python一覧にする` | The items of `list(物)` as a list of `Python物` |
+| `物 を 物群 で Python物呼出する` | `物(*物群)`, passing arguments as a list of `Python物` |
+| `物 を 物群 で 名前つき に Python物名前つき呼出する` | `物(*物群, **名前つき)`; 名前つき is a dict `Python物` |
+
 ## License
 
 MIT
