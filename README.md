@@ -4,8 +4,6 @@ English | [日本語](README_jp.md)
 
 A library for running Python from the Japanese programming language [suru](https://github.com/suru-lang/suru). It embeds libpython in the same process to run Python code and scripts, and to evaluate expressions and get their values back.
 
-Work in progress (plan: [#1](https://github.com/suru-lang/python/issues/1)).
-
 ## Installation
 
 In a [kumu](https://github.com/suru-lang/suru/blob/main/README.md#building-projects-kumu) project:
@@ -93,6 +91,23 @@ r とは f を （（3 を Python整数物にした 結果） と （2.5 を Pyt
 | `物 を Python一覧にする` | The items of `list(物)` as a list of `Python物` |
 | `物 を 物群 で Python物呼出する` | `物(*物群)`, passing arguments as a list of `Python物` |
 | `物 を 物群 で 名前つき に Python物名前つき呼出する` | `物(*物群, **名前つき)`; 名前つき is a dict `Python物` |
+
+## Examples
+
+`例/` has examples you can run as they are (run them with the `suru` interpreter in this repository's folder).
+
+- `例/はじめて.suru` … running code and evaluating expressions
+- `例/手札.suru` … importing a module and calling a function
+- `例/スクリプト.suru` … running a Python script (`例/集計.py`) and catching a failure
+
+## How it works and what it cannot do
+
+1. **One Python per process.** It starts on first use and runs until the program ends. `Python実行する` in every file uses the same namespace (the module `__suru__`). Scripts run as `__main__` in a namespace of their own.
+2. **Every call takes the GIL.** You may call from any suru thread, but Python code never runs in parallel (because of Python's GIL).
+3. **Handles are not released by the GC.** A `Python物` is a reference held on the C side, so suru's GC does not release it. Release it with `Python解放する` when done.
+4. **Python cannot call suru functions.** Calling back is a candidate for later (`docs/今後.md`).
+5. **Numbers up to ±2^62.** `Python整数値にする` fails for ints outside the range of suru's numbers. Get large numbers as strings with `Python文字列にする`.
+6. **The interpreter uses the Python it runs on.** The `suru` interpreter is itself Python, so `SURU_PYTHON` and `VIRTUAL_ENV` are not used (install `suru` in a venv to run it with that venv's Python).
 
 ## License
 
