@@ -18,7 +18,9 @@ Python 3.10 以上と、その libpython(共有ライブラリ)が要ります�
 
 1. インタプリタの `suru` のように、プロセスでもう Python が動いていれば、それを使います。
 2. 環境変数 `SURU_LIBPYTHON` があれば、その libpython のファイルを使います。
-3. 環境変数 `SURU_PYTHON` の Python(なければ `python3`、`python`)に、自分の libpython の場所を聞きます。
+3. 環境変数 `SURU_PYTHON` の Python(なければ、venv の中なら `VIRTUAL_ENV` の Python、それもなければ `python3`、`python`)に、自分の libpython の場所を聞きます。venv の Python なら、その venv に入れたパッケージも使えます。
+
+Windows では MSYS2 の UCRT64 の Python(`pacman -S mingw-w64-ucrt-x86_64-python`)を使います。
 
 する 本体は 0.9.1 以上が要ります。
 

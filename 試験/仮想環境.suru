@@ -1,0 +1,12 @@
+「試験」 を 読み込んで 使う
+「JSON」 を 読み込んで 使う
+「Python」 を 読み込んで 使う
+
+# VIRTUAL_ENV があれば、その venv の Python を使い、venv に入れたもの(venvだけ.py)を取り込める。
+# CI では venv を作って VIRTUAL_ENV を付けて動かす(手元でふつうに動かすときは何も調べない)
+仮想環境試験する は 真偽 の 動作
+仮想環境試験する とは 以下の手順です
+  「import os, sys」 を Python実行する
+  「venv = os.environ.get('VIRTUAL_ENV')」 を Python実行する
+  （「venv is None or (sys.prefix == venv and __import__('venvだけ').名前 == 'venv の中です')」 を Python評価した 結果） を （真 の JSON真偽） に 一致確認する
+  以上です

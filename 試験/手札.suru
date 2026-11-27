@@ -59,7 +59,8 @@
   m とは 「math」 を Python取込した 結果
   b とは （m から 「無い」 を Python属性取得する） を 試行した 結果
   b を （「Python で属性『無い』を取るのに失敗しました(AttributeError: module 'math' has no attribute '無い')」 の 失敗） に 一致確認する
-  f とは m から 「sqrt」 を Python属性取得した 結果
-  c とは （f を （（-1 の JSON数） を 空 に 挿入する） で Python呼出する） を 試行した 結果
-  c を （「Python で呼び出すのに失敗しました(ValueError: math domain error)」 の 失敗） に 一致確認する
+  # 例外の文が Python の版で変わらないもの(math.sqrt(-1) の文は 3.14 で変わった)
+  f とは 「int」 を Python物評価した 結果
+  c とは （f を （（「x」 の JSON文字列） を 空 に 挿入する） で Python呼出する） を 試行した 結果
+  c を （「Python で呼び出すのに失敗しました(ValueError: invalid literal for int() with base 10: 'x')」 の 失敗） に 一致確認する
   以上です

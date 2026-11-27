@@ -18,7 +18,9 @@ You need Python 3.10 or later and its libpython (shared library). No Python head
 
 1. If Python is already running in the process (like the `suru` interpreter), it uses that.
 2. If the environment variable `SURU_LIBPYTHON` is set, it loads that libpython file.
-3. It asks the Python in `SURU_PYTHON` (otherwise `python3`, then `python`) where its libpython is.
+3. It asks the Python in `SURU_PYTHON` (otherwise the Python of `VIRTUAL_ENV` inside a venv, otherwise `python3`, then `python`) where its libpython is. With a venv's Python, packages installed in that venv can be used too.
+
+On Windows, use the MSYS2 UCRT64 Python (`pacman -S mingw-w64-ucrt-x86_64-python`).
 
 suru 0.9.1 or later is required.
 
