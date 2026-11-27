@@ -14,7 +14,7 @@
 kumu 追加 github.com/suru-lang/python
 ```
 
-Python 3.8 以上と、その libpython(共有ライブラリ)が要ります。作るときに Python のヘッダーは要りません。使い始めるときに、次の順で libpython を探します。
+Python 3.10 以上と、その libpython(共有ライブラリ)が要ります。作るときに Python のヘッダーは要りません。使い始めるときに、次の順で libpython を探します。
 
 1. インタプリタの `suru` のように、プロセスでもう Python が動いていれば、それを使います。
 2. 環境変数 `SURU_LIBPYTHON` があれば、その libpython のファイルを使います。

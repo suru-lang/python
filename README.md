@@ -14,7 +14,7 @@ In a [kumu](https://github.com/suru-lang/suru/blob/main/README.md#building-proje
 kumu 追加 github.com/suru-lang/python
 ```
 
-You need Python 3.8 or later and its libpython (shared library). No Python headers are needed at build time. When first used, the library looks for libpython in this order:
+You need Python 3.10 or later and its libpython (shared library). No Python headers are needed at build time. When first used, the library looks for libpython in this order:
 
 1. If Python is already running in the process (like the `suru` interpreter), it uses that.
 2. If the environment variable `SURU_LIBPYTHON` is set, it loads that libpython file.
