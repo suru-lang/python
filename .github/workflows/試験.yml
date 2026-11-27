@@ -1,0 +1,43 @@
+# kumu 試験 と kumu 点検 を、Linux と macOS で、古い Python と新しい Python で動かします
+name: 試験
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.9", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: clang を入れる
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: kumu を入れる
+        run: go install github.com/suru-lang/suru/cmd/kumu@main
+      - name: 試験
+        # バイナリは PATH の python3(setup-python のもの)に libpython の場所を聞く
+        run: ~/go/bin/kumu 試験
+      - name: 点検
+        run: ~/go/bin/kumu 点検
+      - name: インタプリタで例を動かす
+        # インタプリタの suru はそれ自体が Python なので、動いている Python をそのまま使う
+        if: matrix.python == '3.13'
+        run: |
+          python -m pip install "git+https://github.com/suru-lang/suru@main"
+          suru 例/はじめて.suru
