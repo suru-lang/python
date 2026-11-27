@@ -491,10 +491,10 @@ static void ensure_started(void) { pthread_once(&once, start); }
 #endif
 
 // ---- する から呼ぶ関数 ----
-// どれも 0 で成功、-1 で失敗(文は supy_text で取る)
+// どれも 0 で成功、-1 で失敗(文は impl_text で取る)
 
 // 始める。失敗したら -1
-int64_t supy_start(void) {
+static int64_t impl_start(void) {
   ensure_started();
   if (init_error[0]) {
     set_text(init_error);
@@ -504,11 +504,10 @@ int64_t supy_start(void) {
 }
 
 // 最後の結果の文字列(評価した値の JSON か、エラーの文)
-const char *supy_text(void) { return last_text ? last_text : ""; }
 
 // コードを __suru__ で実行する(文の並び)
-int64_t supy_exec(const char *code) {
-  if (supy_start() < 0) return -1;
+static int64_t impl_exec(const char *code) {
+  if (impl_start() < 0) return -1;
   PyGILState_STATE g = p_PyGILState_Ensure();
   PyObject *r = p_PyRun_StringFlags(code, PY_FILE_INPUT, main_dict, main_dict, NULL);
   int64_t rc = 0;
@@ -525,8 +524,8 @@ int64_t supy_exec(const char *code) {
 }
 
 // 式を __suru__ で評価し、値を JSON の文字列にして置く
-int64_t supy_eval_json(const char *code) {
-  if (supy_start() < 0) return -1;
+static int64_t impl_eval_json(const char *code) {
+  if (impl_start() < 0) return -1;
   PyGILState_STATE g = p_PyGILState_Ensure();
   int64_t rc = -1;
   PyObject *v = p_PyRun_StringFlags(code, PY_EVAL_INPUT, main_dict, main_dict, NULL);
@@ -549,8 +548,8 @@ int64_t supy_eval_json(const char *code) {
 }
 
 // スクリプトのファイルを __main__ として実行する(runpy.run_path)
-int64_t supy_run_file(const char *path) {
-  if (supy_start() < 0) return -1;
+static int64_t impl_run_file(const char *path) {
+  if (impl_start() < 0) return -1;
   PyGILState_STATE g = p_PyGILState_Ensure();
   int64_t rc = -1;
   PyObject *p = p_PyUnicode_FromString(path);
@@ -570,8 +569,8 @@ int64_t supy_run_file(const char *path) {
 }
 
 // ---- 手札(Python の物) ----
-// 物を返す関数は、新しい参照の番地を返します(失敗は 0 で、文は supy_text)。
-// 使い終わったら supy_release で放します。
+// 物を返す関数は、新しい参照の番地を返します(失敗は 0 で、文は impl_text)。
+// 使い終わったら impl_release で放します。
 
 // 物を返した後の始末: 失敗なら文を置く
 static PyObject *done_obj(PyObject *o) {
@@ -598,8 +597,8 @@ static int64_t done_text(PyObject *s) {
 }
 
 // モジュールを取り込む(import 名前。「os.path」のような点の入った名前も)
-void *supy_import(const char *name) {
-  if (supy_start() < 0) return NULL;
+static void *impl_import(const char *name) {
+  if (impl_start() < 0) return NULL;
   PyGILState_STATE g = p_PyGILState_Ensure();
   // PyImport_ImportModule は「os.path」なら一番内側のモジュールを返す(import 文と違う)
   PyObject *o = p_PyImport_ImportModule(name);
@@ -609,8 +608,8 @@ void *supy_import(const char *name) {
 }
 
 // 式を評価して、物のまま返す
-void *supy_eval_obj(const char *code) {
-  if (supy_start() < 0) return NULL;
+static void *impl_eval_obj(const char *code) {
+  if (impl_start() < 0) return NULL;
   PyGILState_STATE g = p_PyGILState_Ensure();
   PyObject *o = done_obj(p_PyRun_StringFlags(code, PY_EVAL_INPUT, main_dict, main_dict, NULL));
   p_PyGILState_Release(g);
@@ -618,8 +617,8 @@ void *supy_eval_obj(const char *code) {
 }
 
 // 属性を取る
-void *supy_getattr(void *obj, const char *name) {
-  if (supy_start() < 0) return NULL;
+static void *impl_getattr(void *obj, const char *name) {
+  if (impl_start() < 0) return NULL;
   PyGILState_STATE g = p_PyGILState_Ensure();
   PyObject *o = done_obj(p_PyObject_GetAttrString(obj, name));
   p_PyGILState_Release(g);
@@ -627,8 +626,8 @@ void *supy_getattr(void *obj, const char *name) {
 }
 
 // 呼ぶ。args は JSON の配列、kwargs は JSON の物(空の文字列なら無し)
-void *supy_call(void *f, const char *args, const char *kwargs) {
-  if (supy_start() < 0) return NULL;
+static void *impl_call(void *f, const char *args, const char *kwargs) {
+  if (impl_start() < 0) return NULL;
   PyGILState_STATE g = p_PyGILState_Ensure();
   PyObject *a = p_PyUnicode_FromString(args);
   PyObject *k = p_PyUnicode_FromString(kwargs);
@@ -642,8 +641,8 @@ void *supy_call(void *f, const char *args, const char *kwargs) {
 }
 
 // JSON の文字列から Python の値を作る
-void *supy_from_json(const char *json) {
-  if (supy_start() < 0) return NULL;
+static void *impl_from_json(const char *json) {
+  if (impl_start() < 0) return NULL;
   PyGILState_STATE g = p_PyGILState_Ensure();
   PyObject *s = p_PyUnicode_FromString(json);
   PyObject *o = s ? p_PyObject_CallFunctionObjArgs(fn_from_json, s, NULL) : NULL;
@@ -654,8 +653,8 @@ void *supy_from_json(const char *json) {
 }
 
 // 物を JSON の文字列にして置く
-int64_t supy_obj_json(void *obj) {
-  if (supy_start() < 0) return -1;
+static int64_t impl_obj_json(void *obj) {
+  if (impl_start() < 0) return -1;
   PyGILState_STATE g = p_PyGILState_Ensure();
   int64_t rc = done_text(p_PyObject_CallFunctionObjArgs(fn_to_json, obj, NULL));
   p_PyGILState_Release(g);
@@ -663,8 +662,8 @@ int64_t supy_obj_json(void *obj) {
 }
 
 // 物を str() の文字列にして置く
-int64_t supy_obj_str(void *obj) {
-  if (supy_start() < 0) return -1;
+static int64_t impl_obj_str(void *obj) {
+  if (impl_start() < 0) return -1;
   PyGILState_STATE g = p_PyGILState_Ensure();
   int64_t rc = done_text(p_PyObject_Str(obj));
   p_PyGILState_Release(g);
@@ -672,8 +671,8 @@ int64_t supy_obj_str(void *obj) {
 }
 
 // 物に名前を付けて、Python実行する・Python評価する のコードから使えるようにする
-int64_t supy_bind(const char *name, void *obj) {
-  if (supy_start() < 0) return -1;
+static int64_t impl_bind(const char *name, void *obj) {
+  if (impl_start() < 0) return -1;
   PyGILState_STATE g = p_PyGILState_Ensure();
   int64_t rc = -1;
   PyObject *n = p_PyUnicode_FromString(name);
@@ -692,8 +691,8 @@ int64_t supy_bind(const char *name, void *obj) {
 }
 
 // 物を放す(参照を1つ減らす)
-int64_t supy_release(void *obj) {
-  if (!obj || supy_start() < 0) return 0;
+static int64_t impl_release(void *obj) {
+  if (!obj || impl_start() < 0) return 0;
   PyGILState_STATE g = p_PyGILState_Ensure();
   p_Py_DecRef(obj);
   p_PyGILState_Release(g);
@@ -763,7 +762,7 @@ static int load_more(void) {
 
 // 始めて、追加の関数も取る。GIL を取った状態を g に入れて 1、だめなら 0
 static int enter(PyGILState_STATE *g) {
-  if (supy_start() < 0) return 0;
+  if (impl_start() < 0) return 0;
   *g = p_PyGILState_Ensure();
   if (!load_more()) {
     p_PyGILState_Release(*g);
@@ -779,20 +778,20 @@ static int enter(PyGILState_STATE *g) {
   p_PyGILState_Release(g);                 \
   return o
 
-void *supy_from_int(int64_t n) { WITH_GIL(p_PyLong_FromLongLong(n)); }
-void *supy_from_float(double x) { WITH_GIL(p_PyFloat_FromDouble(x)); }
-void *supy_from_bool(int b) { WITH_GIL(p_PyBool_FromLong(b)); }
-void *supy_from_str(const char *s) { WITH_GIL(p_PyUnicode_FromString(s)); }
-void *supy_from_bytes(const uint8_t *b, int64_t n) { WITH_GIL(p_PyBytes_FromStringAndSize((const char *)b, (intptr_t)n)); }
+static void *impl_from_int(int64_t n) { WITH_GIL(p_PyLong_FromLongLong(n)); }
+static void *impl_from_float(double x) { WITH_GIL(p_PyFloat_FromDouble(x)); }
+static void *impl_from_bool(int b) { WITH_GIL(p_PyBool_FromLong(b)); }
+static void *impl_from_str(const char *s) { WITH_GIL(p_PyUnicode_FromString(s)); }
+static void *impl_from_bytes(const uint8_t *b, int64_t n) { WITH_GIL(p_PyBytes_FromStringAndSize((const char *)b, (intptr_t)n)); }
 
 // obj[key]
-void *supy_getitem(void *obj, void *key) { WITH_GIL(p_PyObject_GetItem(obj, key)); }
+static void *impl_getitem(void *obj, void *key) { WITH_GIL(p_PyObject_GetItem(obj, key)); }
 
-// 長さの決まった物の並びを作る(呼出の引数のため)。要素は supy_tuple_set で入れる
-void *supy_tuple_new(int64_t n) { WITH_GIL(p_PyTuple_New((intptr_t)n)); }
+// 長さの決まった物の並びを作る(呼出の引数のため)。要素は impl_tuple_set で入れる
+static void *impl_tuple_new(int64_t n) { WITH_GIL(p_PyTuple_New((intptr_t)n)); }
 
 // 並びの i 番目に物を入れる(物の参照は並びが別に持つので、物は放してかまわない)
-int64_t supy_tuple_set(void *t, int64_t i, void *obj) {
+static int64_t impl_tuple_set(void *t, int64_t i, void *obj) {
   PyGILState_STATE g;
   if (!enter(&g)) return -1;
   p_Py_IncRef(obj);  // SetItem は参照を盗む
@@ -803,13 +802,13 @@ int64_t supy_tuple_set(void *t, int64_t i, void *obj) {
 }
 
 // f(*並び)
-void *supy_call_tuple(void *f, void *t) { WITH_GIL(p_PyObject_Call(f, t, NULL)); }
+static void *impl_call_tuple(void *f, void *t) { WITH_GIL(p_PyObject_Call(f, t, NULL)); }
 
 // f(*並び, **辞書)
-void *supy_call_tuple_kw(void *f, void *t, void *kw) { WITH_GIL(p_PyObject_Call(f, t, kw)); }
+static void *impl_call_tuple_kw(void *f, void *t, void *kw) { WITH_GIL(p_PyObject_Call(f, t, kw)); }
 
-// 数にする(int にできるもの。結果は supy_int)
-int64_t supy_to_int(void *obj) {
+// 数にする(int にできるもの。結果は impl_int)
+static int64_t impl_to_int(void *obj) {
   PyGILState_STATE g;
   if (!enter(&g)) return -1;
   long long v = p_PyLong_AsLongLong(obj);
@@ -826,10 +825,9 @@ int64_t supy_to_int(void *obj) {
   p_PyGILState_Release(g);
   return rc;
 }
-int64_t supy_int(void) { return last_int; }
 
-// 小数にする(float にできるもの。結果は supy_float)
-int64_t supy_to_float(void *obj) {
+// 小数にする(float にできるもの。結果は impl_float)
+static int64_t impl_to_float(void *obj) {
   PyGILState_STATE g;
   if (!enter(&g)) return -1;
   double v = p_PyFloat_AsDouble(obj);
@@ -843,10 +841,9 @@ int64_t supy_to_float(void *obj) {
   p_PyGILState_Release(g);
   return rc;
 }
-double supy_float(void) { return last_float; }
 
 // 真偽にする(bool(物))。1・0、失敗は -1
-int64_t supy_to_bool(void *obj) {
+static int64_t impl_to_bool(void *obj) {
   PyGILState_STATE g;
   if (!enter(&g)) return -1;
   int r = p_PyObject_IsTrue(obj);
@@ -855,8 +852,8 @@ int64_t supy_to_bool(void *obj) {
   return r;
 }
 
-// 文字列にする(str の物だけ。結果は supy_text)
-int64_t supy_to_str(void *obj) {
+// 文字列にする(str の物だけ。結果は impl_text)
+static int64_t impl_to_str(void *obj) {
   PyGILState_STATE g;
   if (!enter(&g)) return -1;
   const char *u = p_PyUnicode_AsUTF8(obj);
@@ -870,8 +867,8 @@ int64_t supy_to_str(void *obj) {
   return rc;
 }
 
-// バイト列にする(bytes・bytearray・memoryview など。長さを返し、中身は supy_buf の番地に)
-int64_t supy_to_bytes(void *obj) {
+// バイト列にする(bytes・bytearray・memoryview など。長さを返し、中身は impl_buf の番地に)
+static int64_t impl_to_bytes(void *obj) {
   PyGILState_STATE g;
   if (!enter(&g)) return -1;
   int64_t rc = -1;
@@ -891,10 +888,9 @@ int64_t supy_to_bytes(void *obj) {
   p_PyGILState_Release(g);
   return rc;
 }
-void *supy_buf(void) { return last_buf; }
 
 // len(物)
-int64_t supy_len(void *obj) {
+static int64_t impl_len(void *obj) {
   PyGILState_STATE g;
   if (!enter(&g)) return -1;
   intptr_t n = p_PyObject_Size(obj);
@@ -904,7 +900,7 @@ int64_t supy_len(void *obj) {
 }
 
 // obj[key] = val
-int64_t supy_setitem(void *obj, void *key, void *val) {
+static int64_t impl_setitem(void *obj, void *key, void *val) {
   PyGILState_STATE g;
   if (!enter(&g)) return -1;
   int64_t rc = p_PyObject_SetItem(obj, key, val) == 0 ? 0 : -1;
@@ -914,7 +910,384 @@ int64_t supy_setitem(void *obj, void *key, void *val) {
 }
 
 // list(物)
-void *supy_to_list(void *obj) { WITH_GIL(p_PySequence_List(obj)); }
+static void *impl_to_list(void *obj) { WITH_GIL(p_PySequence_List(obj)); }
 
 // 並び(list・tuple など)の i 番目(0 から)
-void *supy_index(void *seq, int64_t i) { WITH_GIL(p_PySequence_GetItem(seq, (intptr_t)i)); }
+static void *impl_index(void *seq, int64_t i) { WITH_GIL(p_PySequence_GetItem(seq, (intptr_t)i)); }
+
+// ---- する から呼ぶ関数 ----
+// どれも結果の箱(Res)を返します。中身は supy_res_* で読み、supy_res_free で放します。
+// 結果をスレッドごとの入れ物に置いて、後でもう一度呼んで取ってもらう形にはしません。
+// 2回の呼び出しの間に別の呼び出しが入っても、結果を取り違えないようにするためです。
+
+typedef struct {
+  int64_t rc;  // 0 以上で成功(長さなど)、負で失敗
+  void *obj;   // 物を返す関数の物(失敗は NULL)
+  char *text;  // 文字列の結果か、失敗の文
+  int64_t n;   // 数の結果
+  double f;    // 小数の結果
+  void *buf;   // バイト列の結果(rc バイト)
+} Res;
+
+// 同じ C の呼び出しの中で、スレッドごとの入れ物を箱に移す
+static Res *fill(Res *r) {
+  if (!r) return r;
+  r->text = strdup(last_text ? last_text : "");
+  r->n = last_int;
+  r->f = last_float;
+  return r;
+}
+
+int64_t supy_res_rc(Res *r) { return r ? r->rc : -1; }
+void *supy_res_obj(Res *r) { return r ? r->obj : NULL; }
+const char *supy_res_text(Res *r) { return r && r->text ? r->text : "結果の箱を作れませんでした"; }
+int64_t supy_res_int(Res *r) { return r ? r->n : 0; }
+double supy_res_float(Res *r) { return r ? r->f : 0.0; }
+void *supy_res_buf(Res *r) { return r ? r->buf : NULL; }
+int64_t supy_res_free(Res *r) {
+  if (!r) return 0;
+  free(r->text);
+  free(r->buf);
+  free(r);
+  return 0;
+}
+
+Res *supy_start(void) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_start();
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_exec(const char *code) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_exec(code);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_eval_json(const char *code) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_eval_json(code);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_run_file(const char *path) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_run_file(path);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_obj_json(void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_obj_json(obj);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_obj_str(void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_obj_str(obj);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_bind(const char *name, void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_bind(name, obj);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_release(void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_release(obj);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_tuple_set(void *t, int64_t i, void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_tuple_set(t, i, obj);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_to_int(void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_to_int(obj);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_to_float(void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_to_float(obj);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_to_bool(void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_to_bool(obj);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_to_str(void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_to_str(obj);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_to_bytes(void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_to_bytes(obj);
+  if (r) r->rc = rc;
+  if (r && r->rc >= 0) {
+    r->buf = last_buf;  // 箱へ渡す(入れ物は空にする)
+    last_buf = NULL;
+  }
+  return fill(r);
+}
+
+Res *supy_len(void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_len(obj);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_setitem(void *obj, void *key, void *val) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  int64_t rc = impl_setitem(obj, key, val);
+  if (r) r->rc = rc;
+  return fill(r);
+}
+
+Res *supy_import(const char *name) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_import(name);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_eval_obj(const char *code) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_eval_obj(code);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_getattr(void *obj, const char *name) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_getattr(obj, name);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_call(void *f, const char *args, const char *kwargs) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_call(f, args, kwargs);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_from_json(const char *json) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_from_json(json);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_from_int(int64_t n) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_from_int(n);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_from_float(double x) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_from_float(x);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_from_bool(int b) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_from_bool(b);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_from_str(const char *s) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_from_str(s);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_from_bytes(const uint8_t *b, int64_t n) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_from_bytes(b, n);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_getitem(void *obj, void *key) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_getitem(obj, key);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_tuple_new(int64_t n) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_tuple_new(n);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_call_tuple(void *f, void *t) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_call_tuple(f, t);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_call_tuple_kw(void *f, void *t, void *kw) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_call_tuple_kw(f, t, kw);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_to_list(void *obj) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_to_list(obj);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}
+
+Res *supy_index(void *seq, int64_t i) {
+  if (last_text) last_text[0] = 0;
+  Res *r = (Res *)calloc(1, sizeof(Res));
+  void *o = impl_index(seq, i);
+  if (r) {
+    r->obj = o;
+    r->rc = o ? 0 : -1;
+  } else if (o) {
+    impl_release(o);
+  }
+  return fill(r);
+}

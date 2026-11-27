@@ -49,6 +49,7 @@ jobs:
           python -m pip install "git+https://github.com/suru-lang/suru@main"
           suru 例/はじめて.suru
           suru 例/手札.suru
+          suru 例/スクリプト.suru
 
   # Windows では MSYS2 の UCRT64(clang・lld・Go・Python)で作る。lld は日本語の道(出力/)に書くのに要る
   windows:
