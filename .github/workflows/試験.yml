@@ -1,4 +1,4 @@
-# kumu 試験 と kumu 点検 を、Linux と macOS で、古い Python と新しい Python で動かします
+# kumu 試験 と kumu 点検 を、Linux と macOS で古い Python と新しい Python で、Windows(MSYS2)で動かします
 name: 試験
 
 on:
@@ -33,6 +33,13 @@ jobs:
       - name: 試験
         # バイナリは PATH の python3(setup-python のもの)に libpython の場所を聞く
         run: ~/go/bin/kumu 試験
+      - name: venv の Python を使う
+        # VIRTUAL_ENV があれば、その venv の Python と site-packages を使う
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          SP=$("$RUNNER_TEMP/venv/bin/python" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+          echo "名前 = 'venv の中です'" > "$SP/venvだけ.py"
+          VIRTUAL_ENV="$RUNNER_TEMP/venv" ~/go/bin/kumu 試験 仮想環境
       - name: 点検
         run: ~/go/bin/kumu 点検
       - name: インタプリタで例を動かす
@@ -42,3 +49,37 @@ jobs:
           python -m pip install "git+https://github.com/suru-lang/suru@main"
           suru 例/はじめて.suru
           suru 例/手札.suru
+
+  # Windows では MSYS2 の UCRT64(clang・lld・Go・Python)で作る。lld は日本語の道(出力/)に書くのに要る
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-go
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-python
+      - name: kumu を入れる
+        env:
+          GOPROXY: direct
+          # main を足したすぐ後は、sum.golang.org がまだその版を知らないことがある
+          GONOSUMDB: github.com/suru-lang/*
+        run: go install github.com/suru-lang/suru/cmd/kumu@main
+      - name: 試験
+        run: |
+          export PATH="$(cygpath -u "$(go env GOPATH)")/bin:$PATH"
+          kumu 試験
+      - name: 点検
+        run: |
+          export PATH="$(cygpath -u "$(go env GOPATH)")/bin:$PATH"
+          kumu 点検

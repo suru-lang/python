@@ -91,6 +91,12 @@ static const char *helper_source =
     "    if isinstance(v, (str, int)):\n"
     "        raise TypeError('バイト列にできるのは bytes・bytearray・memoryview などです(' + type(v).__name__ + ' は できません)')\n"
     "    return bytes(v)\n"
+    "def adopt(info):\n"
+    "    i = _json.loads(info)\n"
+    "    _sys.path[:] = i['path']\n"
+    "    _sys.prefix = i['prefix']\n"
+    "    _sys.exec_prefix = i['exec_prefix']\n"
+    "    _sys.executable = i['executable']\n"
     "def bind(name, v):\n"
     "    import sys\n"
     "    setattr(sys.modules['__suru__'], name, v)\n"
@@ -168,10 +174,24 @@ static void *sym(const char *name) {
 #endif
 }
 
+#ifdef _WIN32
+// UTF-8 の文字列を Windows の幅の広い文字列にする(日本語の道のため)
+static wchar_t *widen(const char *s) {
+  int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
+  wchar_t *w = n > 0 ? (wchar_t *)malloc(sizeof(wchar_t) * (size_t)n) : NULL;
+  if (w) MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n);
+  return w;
+}
+#endif
+
 static int open_lib(const char *path) {
   if (!path || !*path) return 0;
 #ifdef _WIN32
-  lib = (void *)LoadLibraryA(path);
+  wchar_t *w = widen(path);
+  // 同じフォルダの DLL(vcruntime など)も探せるように、道の付いた読み方にする
+  lib = w ? (void *)LoadLibraryExW(w, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) : NULL;
+  if (!lib && w) lib = (void *)LoadLibraryW(w);
+  free(w);
 #else
   lib = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
 #endif
@@ -179,20 +199,28 @@ static int open_lib(const char *path) {
   return have_lib;
 }
 
-// python3 に、自分の libpython の場所と prefix を聞く(1行目: libpython の候補を「;」区切り、2行目: PYTHONHOME)
+// python に、自分の libpython の場所などを聞く
+//   1行目: libpython の候補を「;」区切り(Windows の道に ; は使えない)
+//   2行目: PYTHONHOME(base_prefix と base_exec_prefix)
+//   3行目: その Python の sys.path などの JSON(venv の site-packages を使うため)
 static const char *ask_script =
-    "import sys, sysconfig, os\n"
+    "import sys, sysconfig, os, json\n"
     "v = sysconfig.get_config_var\n"
     "c = []\n"
     "fw = v('PYTHONFRAMEWORKPREFIX')\n"
     "if fw and v('LDLIBRARY'): c.append(os.path.join(fw, v('LDLIBRARY')))\n"
-    "for d in (v('LIBDIR'), v('LIBPL'), os.path.join(sys.base_prefix, 'lib'), sys.base_prefix):\n"
-    "    for n in (v('LDLIBRARY'), v('INSTSONAME'), 'libpython%d.%d.so' % sys.version_info[:2],\n"
-    "              'libpython%d.%d.dylib' % sys.version_info[:2], 'libpython%d.%d.dll' % sys.version_info[:2],\n"
-    "              'python%d%d.dll' % sys.version_info[:2]):\n"
+    "ver = sys.version_info[:2]\n"
+    "for d in (v('LIBDIR'), v('LIBPL'), os.path.join(sys.base_prefix, 'lib'), os.path.join(sys.base_prefix, 'bin'),\n"
+    "          sys.base_prefix, os.path.dirname(getattr(sys, '_base_executable', '') or sys.executable)):\n"
+    "    for n in (v('LDLIBRARY'), v('INSTSONAME'), 'libpython%d.%d.so' % ver, 'libpython%d.%d.dylib' % ver,\n"
+    "              'libpython%d.%d.dll' % ver, 'python%d%d.dll' % ver):\n"
     "        if d and n: c.append(os.path.join(d, n))\n"
     "print(';'.join(p for p in c if os.path.isfile(p)))\n"
-    "print(sys.base_prefix + os.pathsep + sys.base_exec_prefix)\n";
+    "print(sys.base_prefix + os.pathsep + sys.base_exec_prefix)\n"
+    "print(json.dumps({'path': sys.path[1:], 'prefix': sys.prefix, 'exec_prefix': sys.exec_prefix,\n"
+    "                  'executable': sys.executable}, ensure_ascii=True))\n";
+
+static char asked_info[65536];  // 3行目(聞いた Python の sys.path など)。空なら聞いていない
 
 static int ask_python(const char *exe, char *home, size_t home_size) {
   char cmd[4096];
@@ -209,15 +237,18 @@ static int ask_python(const char *exe, char *home, size_t home_size) {
   if (!f) return 0;
   fputs(ask_script, f);
   fclose(f);
-  snprintf(cmd, sizeof cmd, "\"%s\" \"%s\"", exe, script_path);
+  // -X utf8: 出力を UTF-8 にする(日本語の道のため)
 #ifdef _WIN32
+  // cmd.exe は前後の " を1組外すので、全体をもう1組で囲む
+  snprintf(cmd, sizeof cmd, "\"\"%s\" -X utf8 \"%s\"\"", exe, script_path);
   FILE *p = _popen(cmd, "r");
 #else
+  snprintf(cmd, sizeof cmd, "\"%s\" -X utf8 \"%s\" 2>/dev/null", exe, script_path);
   FILE *p = popen(cmd, "r");
 #endif
   int ok = 0;
   if (p) {
-    static char line1[8192];
+    static char line1[16384];
     static char line2[4096];
     if (fgets(line1, sizeof line1, p) && fgets(line2, sizeof line2, p)) {
       line1[strcspn(line1, "\r\n")] = 0;
@@ -228,7 +259,11 @@ static int ask_python(const char *exe, char *home, size_t home_size) {
         ok = open_lib(s);
         s = semi ? semi + 1 : NULL;
       }
-      if (ok) snprintf(home, home_size, "%s", line2);
+      if (ok) {
+        snprintf(home, home_size, "%s", line2);
+        if (fgets(asked_info, sizeof asked_info, p)) asked_info[strcspn(asked_info, "\r\n")] = 0;
+        else asked_info[0] = 0;
+      }
     }
 #ifdef _WIN32
     _pclose(p);
@@ -238,6 +273,36 @@ static int ask_python(const char *exe, char *home, size_t home_size) {
   }
   remove(script_path);
   return ok;
+}
+
+// すでにプロセスにいる Python(インタプリタの suru など)を探す
+static int find_running_python(void) {
+#ifdef _WIN32
+  static const char *names[] = {"python3%d.dll", "libpython3.%d.dll"};
+  for (int k = 0; k < 2; k++) {
+    for (int minor = 8; minor <= 30; minor++) {
+      char name[64];
+      snprintf(name, sizeof name, names[k], minor);
+      HMODULE h = GetModuleHandleA(name);
+      if (!h) continue;
+      int (*is_init)(void) = (int (*)(void))GetProcAddress(h, "Py_IsInitialized");
+      if (is_init && is_init()) {
+        lib = (void *)h;
+        have_lib = 1;
+        return 1;
+      }
+    }
+  }
+  return 0;
+#else
+  int (*is_init)(void) = (int (*)(void))dlsym(RTLD_DEFAULT, "Py_IsInitialized");
+  if (is_init && is_init()) {
+    lib = RTLD_DEFAULT;
+    have_lib = 1;
+    return 1;
+  }
+  return 0;
+#endif
 }
 
 // 使う関数を全部取る。足りなければ 0
@@ -307,17 +372,10 @@ static void start(void) {
   init_error[0] = 0;
   char home[4096] = "";
   int we_set_home = 0;
+  int we_started = 0;  // この包みが Python を始めた(すでに動いていたのではない)
   const char *env_lib = getenv("SURU_LIBPYTHON");
-#ifndef _WIN32
   // すでにプロセスに Python がいる(インタプリタの suru、または Python から読み込まれた)ならそれを使う
-  {
-    int (*is_init)(void) = (int (*)(void))dlsym(RTLD_DEFAULT, "Py_IsInitialized");
-    if (is_init && is_init()) {
-      lib = RTLD_DEFAULT;
-      have_lib = 1;
-    }
-  }
-#endif
+  find_running_python();
   if (!have_lib && env_lib && *env_lib) {
     if (!open_lib(env_lib)) {
       snprintf(init_error, sizeof init_error, "SURU_LIBPYTHON の「%s」を開けません", env_lib);
@@ -326,9 +384,20 @@ static void start(void) {
   }
   if (!have_lib) {
     const char *exe = getenv("SURU_PYTHON");
+    char venv_exe[4096];
+    const char *venv = getenv("VIRTUAL_ENV");
+    if ((!exe || !*exe) && venv && *venv) {
+      // venv の中で動かしたら、その venv の Python を使う
+#ifdef _WIN32
+      snprintf(venv_exe, sizeof venv_exe, "%s\\Scripts\\python.exe", venv);
+#else
+      snprintf(venv_exe, sizeof venv_exe, "%s/bin/python", venv);
+#endif
+      exe = venv_exe;
+    }
     if (exe && *exe) {
       if (!ask_python(exe, home, sizeof home)) {
-        snprintf(init_error, sizeof init_error, "SURU_PYTHON の「%s」から libpython を見つけられません", exe);
+        snprintf(init_error, sizeof init_error, "Python の「%s」から libpython を見つけられません", exe);
         return;
       }
     } else if (!ask_python("python3", home, sizeof home) && !ask_python("python", home, sizeof home)) {
@@ -364,6 +433,7 @@ static void start(void) {
       snprintf(init_error, sizeof init_error, "Python を始められませんでした");
       return;
     }
+    we_started = 1;
     p_PyEval_SaveThread();  // GIL を放す(これからは呼ぶたびに取る)
   }
 
@@ -390,6 +460,14 @@ static void start(void) {
     fn_call = p_PyDict_GetItemString(hd, "call");
     fn_bind = p_PyDict_GetItemString(hd, "bind");
     fn_to_bytes = p_PyDict_GetItemString(hd, "to_bytes");
+    // 聞いた Python(venv など)の sys.path・prefix・executable に合わせる
+    if (we_started && asked_info[0]) {
+      PyObject *fn_adopt = p_PyDict_GetItemString(hd, "adopt");
+      PyObject *info = p_PyUnicode_FromString(asked_info);
+      PyObject *r3 = (fn_adopt && info) ? p_PyObject_CallFunctionObjArgs(fn_adopt, info, NULL) : NULL;
+      if (info) p_Py_DecRef(info);
+      if (r3) p_Py_DecRef(r3); else p_PyErr_Clear();
+    }
     // 始めるためだけに足した環境変数は、Python から動かす子のプロセスに渡さない
     if (we_set_home) {
       PyObject *r2 = p_PyRun_StringFlags("_os.environ.pop('PYTHONHOME', None)\n", PY_FILE_INPUT, hd, hd, NULL);
